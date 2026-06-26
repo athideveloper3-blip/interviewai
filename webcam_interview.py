@@ -35,7 +35,7 @@ st.set_page_config(
     page_title="InterviewAI — Resume-Aware Voice Practice",
     page_icon="🎙️",
     layout="wide",
-    initial_sidebar_state="expanded",   # sidebar open so webcam is visible
+    initial_sidebar_state="collapsed",
 )
 
 # ── Lazy imports ──────────────────────────────────────────────────────────────
@@ -1601,12 +1601,13 @@ elif S.screen == "interview":
     if cfg.get("auto_tts"):
         announce_question(cq + 1, S.current_question)
 
-    # ── Webcam lives in sidebar (no reload between questions) ──
+    # ── Two-column layout: Answer (left) + Webcam (right) ──
     if cfg.get("use_webcam"):
-        render_webcam_monitor()   # renders inside st.sidebar internally
+        col_answer, col_webcam = st.columns([5, 4])
+    else:
+        col_answer = st.container()
+        col_webcam = None
 
-    # ── Answer section ──
-    col_answer = st.container()
     with col_answer:
         st.markdown('<div class="section-label">Your Answer</div>', unsafe_allow_html=True)
 
@@ -1645,6 +1646,10 @@ elif S.screen == "interview":
             value=S.voice_answer, height=150,
         )
 
+    if col_webcam is not None:
+        with col_webcam:
+            st.markdown('<div class="section-label">Body Language</div>', unsafe_allow_html=True)
+            render_webcam_monitor()
 
     # ── Submit / Skip ──
     st.write("")
