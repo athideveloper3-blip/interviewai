@@ -31,14 +31,9 @@ from streamlit_webrtc import WebRtcMode, RTCConfiguration, webrtc_streamer
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _get_ice_servers() -> list:
-    """
-    Fetch TURN credentials from Metered.ca API.
-    Falls back to STUN-only if credentials are missing (works on same network).
-    """
     api_key  = os.environ.get("METERED_API_KEY",  "")
     app_name = os.environ.get("METERED_APP_NAME", "")
 
-    # Also check Streamlit secrets
     try:
         if not api_key:
             api_key  = st.secrets.get("METERED_API_KEY",  "")
@@ -53,7 +48,6 @@ def _get_ice_servers() -> list:
     ]
 
     if not api_key or not app_name:
-        # No TURN credentials — STUN only (cross-device may not work on all networks)
         return stun_servers
 
     try:
@@ -68,7 +62,7 @@ def _get_ice_servers() -> list:
     return stun_servers
 
 
-@st.cache_data(ttl=3600)   # cache TURN creds for 1 hour
+@st.cache_data(ttl=3600)
 def get_ice_servers_cached() -> list:
     return _get_ice_servers()
 
@@ -871,76 +865,78 @@ def _speak(text: str, rate: float = 0.92):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  Main render function
+#  Main render function  ← KEY CHANGE: @st.fragment + col_webcam param
 # ═════════════════════════════════════════════════════════════════════════════
 
-def render_webcam_monitor() -> Optional[dict]:
-    st.markdown("""
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-      <div style="width:8px;height:8px;border-radius:50%;background:#5ab0ff;
-                  box-shadow:0 0 8px rgba(90,176,255,.8);
-                  animation:pulse-dot 2s infinite;flex-shrink:0;"></div>
-      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;
-                   color:rgba(90,176,255,.7);letter-spacing:.18em;text-transform:uppercase;">
-        Live Monitor · Integrity Analysis
-      </span>
-    </div>
-    <style>
-      @keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1);}50%{opacity:.4;transform:scale(.7);} }
-      div[data-testid="stCustomComponentV1"] > iframe {
-        width:100% !important; height:420px !important;
-        border-radius:14px !important;
-        border:1px solid rgba(90,176,255,.2) !important;
-        background:#06060c !important;
-      }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # Build RTC config with TURN servers (cached)
-    rtc_config = build_rtc_config()
-
-    ctx = webrtc_streamer(
-        key="bl_monitor",
-        mode=WebRtcMode.SENDRECV,
-        rtc_configuration=rtc_config,          # ← uses TURN servers
-        video_processor_factory=VideoProcessor,
-        media_stream_constraints={
-            "video": {
-                "width":     {"ideal": 640},
-                "height":    {"ideal": 480},
-                "frameRate": {"ideal": 15, "max": 20},
-            },
-            "audio": False,
-        },
-        async_processing=True,
-        desired_playing_state=True,
-        translations={
-            "start": "▶  Start Camera  (stays on for whole session)",
-            "stop":  "■  Stop Camera",
-        },
-    )
-
-    if not ctx.state.playing:
-        components.html("""
-        <!DOCTYPE html><html><body style="margin:0;background:#0e0e18;">
-        <div style="border:1px dashed rgba(90,176,255,.2);border-radius:14px;
-                    padding:40px 20px;text-align:center;font-family:monospace;">
-          <div style="font-size:36px;margin-bottom:12px;">📹</div>
-          <div style="font-size:11px;color:rgba(90,176,255,.5);line-height:1.9;">
-            Click <strong style="color:#5ab0ff;">Start Camera</strong> above<br/>
-            <span style="font-size:10px;color:rgba(90,176,255,.3);">
-              Only needed once — persists across all questions
-            </span>
-          </div>
+@st.fragment
+def render_webcam_monitor(col_webcam=None) -> None:
+    container = col_webcam if col_webcam is not None else st.container()
+    with container:
+        st.markdown('<div class="section-label">Body Language</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <div style="width:8px;height:8px;border-radius:50%;background:#5ab0ff;
+                      box-shadow:0 0 8px rgba(90,176,255,.8);
+                      animation:pulse-dot 2s infinite;flex-shrink:0;"></div>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;
+                       color:rgba(90,176,255,.7);letter-spacing:.18em;text-transform:uppercase;">
+            Live Monitor · Integrity Analysis
+          </span>
         </div>
-        </body></html>
-        """, height=160)
-        return None
+        <style>
+          @keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1);}50%{opacity:.4;transform:scale(.7);} }
+          div[data-testid="stCustomComponentV1"] > iframe {
+            width:100% !important; height:420px !important;
+            border-radius:14px !important;
+            border:1px solid rgba(90,176,255,.2) !important;
+            background:#06060c !important;
+          }
+        </style>
+        """, unsafe_allow_html=True)
 
-    summary = get_final_bl_summary()
-    scores_html = _build_scores_html(summary)
-    components.html(scores_html, height=800, scrolling=False)
-    return summary
+        rtc_config = build_rtc_config()
+
+        ctx = webrtc_streamer(
+            key="bl_monitor",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=rtc_config,
+            video_processor_factory=VideoProcessor,
+            media_stream_constraints={
+                "video": {
+                    "width":     {"ideal": 640},
+                    "height":    {"ideal": 480},
+                    "frameRate": {"ideal": 15, "max": 20},
+                },
+                "audio": False,
+            },
+            async_processing=True,
+            desired_playing_state=True,
+            translations={
+                "start": "▶  Start Camera  (stays on for whole session)",
+                "stop":  "■  Stop Camera",
+            },
+        )
+
+        if not ctx.state.playing:
+            components.html("""
+            <!DOCTYPE html><html><body style="margin:0;background:#0e0e18;">
+            <div style="border:1px dashed rgba(90,176,255,.2);border-radius:14px;
+                        padding:40px 20px;text-align:center;font-family:monospace;">
+              <div style="font-size:36px;margin-bottom:12px;">📹</div>
+              <div style="font-size:11px;color:rgba(90,176,255,.5);line-height:1.9;">
+                Click <strong style="color:#5ab0ff;">Start Camera</strong> above<br/>
+                <span style="font-size:10px;color:rgba(90,176,255,.3);">
+                  Only needed once — persists across all questions
+                </span>
+              </div>
+            </div>
+            </body></html>
+            """, height=160)
+            return
+
+        summary = get_final_bl_summary()
+        scores_html = _build_scores_html(summary)
+        components.html(scores_html, height=800, scrolling=False)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
