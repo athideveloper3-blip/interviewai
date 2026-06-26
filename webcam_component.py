@@ -1,11 +1,7 @@
 """
 webcam_component.py  ·  InterviewAI — Body Language Monitor
 ============================================================
-Cross-device compatible version with Metered.ca TURN server support.
-TURN servers allow webcam streaming to work from any device/network.
-
-Requires:
-    pip install streamlit-webrtc av mediapipe ultralytics opencv-python-headless
+Optimized version — fast startup, no YOLO download, smooth WebRTC.
 """
 
 from __future__ import annotations
@@ -13,6 +9,7 @@ from __future__ import annotations
 import os
 import time
 import threading
+import json
 from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
@@ -22,11 +19,10 @@ import cv2
 import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
-import json
 from streamlit_webrtc import WebRtcMode, RTCConfiguration, webrtc_streamer
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  TURN / ICE server configuration  (Metered.ca)
+#  TURN / ICE server configuration  (free public TURN — no signup needed)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _get_ice_servers() -> list:
@@ -51,7 +47,7 @@ def _get_ice_servers() -> list:
     ]
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=86400)
 def get_ice_servers_cached() -> list:
     return _get_ice_servers()
 
@@ -256,17 +252,9 @@ class BodyLanguageAnalyzer:
         self._gaze_history   = deque(maxlen=90)
         self._yaw_buf        = deque(maxlen=8)
         self._pitch_buf      = deque(maxlen=8)
+        self._last_frame     = None  # cache last processed frame
+        # YOLO disabled — speeds up boot significantly
         self._yolo           = None
-        self._last_phone_det = 0.0
-        self._init_yolo()
-
-    def _init_yolo(self):
-        try:
-            from ultralytics import YOLO
-            model_path = os.path.join(os.path.dirname(__file__), "yolov8n.pt")
-            self._yolo = YOLO(model_path)
-        except Exception:
-            self._yolo = None
 
     def reset_session(self):
         with self._lock:
@@ -281,6 +269,7 @@ class BodyLanguageAnalyzer:
             self._gaze_history.clear()
             self._yaw_buf.clear()
             self._pitch_buf.clear()
+            self._last_frame   = None
 
     @staticmethod
     def _ear(lm, eye_idx: list, w: int, h: int) -> float:
@@ -386,28 +375,6 @@ class BodyLanguageAnalyzer:
         else:
             self._phone_start = None
 
-    def _detect_phone_yolo(self, frame: np.ndarray) -> bool:
-        if self._yolo is None:
-            return False
-        try:
-            results = self._yolo(frame, verbose=False)
-            for r in results:
-                for box in r.boxes:
-                    cls_id = int(box.cls[0])
-                    label  = self._yolo.names[cls_id]
-                    conf   = float(box.conf[0])
-                    if label == "cell phone" and conf > 0.75:
-                        now = time.time()
-                        if now - self._last_phone_det > 5:
-                            self._last_phone_det = now
-                            self.session.phone_events += 1
-                            self._log(CHEAT_PHONE_USAGE,
-                                      "Phone detected by object-detection model", "high")
-                        return True
-        except Exception:
-            pass
-        return False
-
     def _check_face_absence(self, face_detected: bool, now: float):
         if not face_detected:
             self.session.face_absent_frames += 1
@@ -486,12 +453,20 @@ class BodyLanguageAnalyzer:
 
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, None]:
         h, w = frame.shape[:2]
-        rgb  = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         now  = time.time()
 
         with self._lock:
             self.session.total_frames += 1
 
+            # ── OPTIMIZATION: only process every 3rd frame ──
+            if self.session.total_frames % 3 != 0:
+                if self._last_frame is not None:
+                    return self._last_frame, None
+                return frame, None
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        with self._lock:
             det       = self._face_detector.process(rgb)
             num_faces = len(det.detections) if det.detections else 0
             if num_faces > 1:
@@ -507,15 +482,13 @@ class BodyLanguageAnalyzer:
             else:
                 self._multi_start = None
 
-            if self.session.total_frames % 5 == 0:
-                self._detect_phone_yolo(frame)
-
             mesh = self._face_mesh.process(rgb)
             self._check_face_absence(bool(mesh.multi_face_landmarks), now)
 
             if not mesh.multi_face_landmarks:
                 frame = self._draw_hud(frame, "none", "none", 0, 0, 0,
                                        num_faces, self.session.cheat_score(), w, h)
+                self._last_frame = frame
                 return frame, None
 
             lm = mesh.multi_face_landmarks[0].landmark
@@ -598,6 +571,7 @@ class BodyLanguageAnalyzer:
             cheat_s = self.session.cheat_score()
             frame   = self._draw_hud(frame, gaze_dir, head_dir,
                                       yaw, pitch, nerv, num_faces, cheat_s, w, h)
+            self._last_frame = frame
             return frame, None
 
     def get_session_summary(self) -> dict:
@@ -854,7 +828,7 @@ def _speak(text: str, rate: float = 0.92):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  Main render function  ← KEY CHANGE: @st.fragment + col_webcam param
+#  Main render function
 # ═════════════════════════════════════════════════════════════════════════════
 
 @st.fragment
