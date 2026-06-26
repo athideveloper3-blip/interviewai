@@ -31,35 +31,25 @@ from streamlit_webrtc import WebRtcMode, RTCConfiguration, webrtc_streamer
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _get_ice_servers() -> list:
-    api_key  = os.environ.get("METERED_API_KEY",  "")
-    app_name = os.environ.get("METERED_APP_NAME", "")
-
-    try:
-        if not api_key:
-            api_key  = st.secrets.get("METERED_API_KEY",  "")
-        if not app_name:
-            app_name = st.secrets.get("METERED_APP_NAME", "")
-    except Exception:
-        pass
-
-    stun_servers = [
+    return [
         {"urls": ["stun:stun.l.google.com:19302"]},
         {"urls": ["stun:stun1.l.google.com:19302"]},
+        {
+            "urls": ["turn:openrelay.metered.ca:80"],
+            "username": "openrelayproject",
+            "credential": "openrelayproject",
+        },
+        {
+            "urls": ["turn:openrelay.metered.ca:443"],
+            "username": "openrelayproject",
+            "credential": "openrelayproject",
+        },
+        {
+            "urls": ["turn:openrelay.metered.ca:443?transport=tcp"],
+            "username": "openrelayproject",
+            "credential": "openrelayproject",
+        },
     ]
-
-    if not api_key or not app_name:
-        return stun_servers
-
-    try:
-        url = f"https://{app_name}.metered.live/api/v1/turn/credentials?apiKey={api_key}"
-        resp = requests.get(url, timeout=5)
-        if resp.status_code == 200:
-            turn_servers = resp.json()
-            return stun_servers + turn_servers
-    except Exception:
-        pass
-
-    return stun_servers
 
 
 @st.cache_data(ttl=3600)
