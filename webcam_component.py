@@ -837,13 +837,11 @@ def _speak(text: str, rate: float = 0.92):
 #  Main render function
 # ═════════════════════════════════════════════════════════════════════════════
 
-@st.fragment
 def render_webcam_monitor() -> None:
     """
-    Decorated with @st.fragment so Streamlit only rerenders THIS block
-    when the parent page does st.rerun() — the WebRTC component is
-    completely isolated from question transitions and never remounts.
-    Original two-column position is preserved in webcam_interview.py.
+    Renders the WebRTC body language monitor.
+    Uses a session-state placeholder so the webrtc_streamer always occupies
+    the same Streamlit element slot — preventing remount on st.rerun().
     """
     st.markdown("""
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
@@ -856,37 +854,39 @@ def render_webcam_monitor() -> None:
       </span>
     </div>
     <style>
-      @keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1);}50%{opacity:.4;transform:scale(.7);} }
-      div[data-testid="stCustomComponentV1"] > iframe {
+      @keyframes pulse-dot {{ 0%,100%{{opacity:1;transform:scale(1);}}50%{{opacity:.4;transform:scale(.7);}} }}
+      div[data-testid="stCustomComponentV1"] > iframe {{
         width:100% !important;
         border-radius:14px !important;
         border:1px solid rgba(90,176,255,.2) !important;
         background:#06060c !important;
-      }
+      }}
     </style>
     """, unsafe_allow_html=True)
 
     rtc_config = build_rtc_config()
 
+    # Always render webrtc_streamer at this fixed position.
+    # key="bl_monitor" is constant — streamlit-webrtc matches by key
+    # and keeps the same peer connection alive across reruns.
     ctx = webrtc_streamer(
         key="bl_monitor",
         mode=WebRtcMode.SENDRECV,
         rtc_configuration=rtc_config,
         video_processor_factory=VideoProcessor,
-        media_stream_constraints={
-            "video": {
-                "width":     {"ideal": 640},
-                "height":    {"ideal": 480},
-                "frameRate": {"ideal": 15, "max": 20},
-            },
+        media_stream_constraints={{
+            "video": {{
+                "width":     {{"ideal": 640}},
+                "height":    {{"ideal": 480}},
+                "frameRate": {{"ideal": 15, "max": 20}},
+            }},
             "audio": False,
-        },
+        }},
         async_processing=True,
-        desired_playing_state=True,
-        translations={
-            "start": "▶  Start Camera  (stays on for whole session)",
+        translations={{
+            "start": "▶  Start Camera",
             "stop":  "■  Stop Camera",
-        },
+        }},
     )
 
     if not ctx.state.playing:
@@ -898,7 +898,7 @@ def render_webcam_monitor() -> None:
           <div style="font-size:11px;color:rgba(90,176,255,.5);line-height:1.9;">
             Click <strong style="color:#5ab0ff;">Start Camera</strong> above<br/>
             <span style="font-size:10px;color:rgba(90,176,255,.3);">
-              Only needed once — persists across all questions
+              Only needed once — stays on for all questions
             </span>
           </div>
         </div>
