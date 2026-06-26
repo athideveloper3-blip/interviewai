@@ -1602,11 +1602,15 @@ elif S.screen == "interview":
         announce_question(cq + 1, S.current_question)
 
     # ── Two-column layout: Answer (left) + Webcam (right) ──
+    # webcam column is rendered FIRST so it always occupies the same
+    # DOM position — key="bl_monitor" then survives st.rerun() intact.
     if cfg.get("use_webcam"):
         col_answer, col_webcam = st.columns([5, 4])
+        with col_webcam:
+            st.markdown('<div class="section-label">Body Language</div>', unsafe_allow_html=True)
+            render_webcam_monitor()
     else:
         col_answer = st.container()
-        col_webcam = None
 
     with col_answer:
         st.markdown('<div class="section-label">Your Answer</div>', unsafe_allow_html=True)
@@ -1645,11 +1649,6 @@ elif S.screen == "interview":
             placeholder="Speak using the mic above, or type your answer here…",
             value=S.voice_answer, height=150,
         )
-
-    if col_webcam is not None:
-        with col_webcam:
-            st.markdown('<div class="section-label">Body Language</div>', unsafe_allow_html=True)
-            render_webcam_monitor()
 
     # ── Submit / Skip ──
     st.write("")
@@ -1704,7 +1703,6 @@ elif S.screen == "interview":
         S.screen = "summary" if (S.current_q + 1 >= total) else "interview"
         if S.screen == "interview":
             S.current_q += 1
-        # NOTE: No reset_analyzer() — keep stream alive across questions
         st.rerun()
 
     # ── Feedback Display ──
