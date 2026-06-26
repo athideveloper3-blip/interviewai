@@ -839,93 +839,85 @@ def _speak(text: str, rate: float = 0.92):
 
 def render_webcam_monitor() -> Optional[dict]:
     """
-    Webcam stream lives in the SIDEBAR — completely outside main content.
-    This means st.rerun() on question transitions never touches the WebRTC
-    component, so the camera feed never drops or reloads between questions.
-
-    A lightweight inline score panel is shown in the caller's column via
-    the returned summary dict (see webcam_interview.py usage).
+    Renders the WebRTC webcam monitor in-place (original column layout).
+    The key "bl_monitor" is always the same so streamlit-webrtc never
+    remounts the peer connection across reruns.
+    The score panel is rendered below the stream inside the same column.
     """
-    # ── Sidebar: stream widget stays here permanently ─────────────────────────
-    with st.sidebar:
-        st.markdown("""
-        <div style="padding:4px 0 10px;">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-            <div style="width:8px;height:8px;border-radius:50%;background:#5ab0ff;
-                        box-shadow:0 0 8px rgba(90,176,255,.8);
-                        animation:pulse-dot 2s infinite;flex-shrink:0;"></div>
-            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;
-                         color:rgba(90,176,255,.7);letter-spacing:.18em;text-transform:uppercase;">
-              Live Monitor · Body Language
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <div style="width:8px;height:8px;border-radius:50%;background:#5ab0ff;
+                  box-shadow:0 0 8px rgba(90,176,255,.8);
+                  animation:pulse-dot 2s infinite;flex-shrink:0;"></div>
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;
+                   color:rgba(90,176,255,.7);letter-spacing:.18em;text-transform:uppercase;">
+        Live Monitor · Integrity Analysis
+      </span>
+    </div>
+    <style>
+      @keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1);}50%{opacity:.4;transform:scale(.7);} }
+      div[data-testid="stCustomComponentV1"] > iframe {
+        width:100% !important;
+        border-radius:14px !important;
+        border:1px solid rgba(90,176,255,.2) !important;
+        background:#06060c !important;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+    rtc_config = build_rtc_config()
+
+    # "bl_monitor" key is fixed — streamlit-webrtc uses this to keep the same
+    # peer connection alive across reruns. Never change this key.
+    ctx = webrtc_streamer(
+        key="bl_monitor",
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration=rtc_config,
+        video_processor_factory=VideoProcessor,
+        media_stream_constraints={
+            "video": {
+                "width":     {"ideal": 640},
+                "height":    {"ideal": 480},
+                "frameRate": {"ideal": 15, "max": 20},
+            },
+            "audio": False,
+        },
+        async_processing=True,
+        desired_playing_state=st.session_state.get("webcam_playing", None),
+        translations={
+            "start": "▶  Start Camera  (stays on for whole session)",
+            "stop":  "■  Stop Camera",
+        },
+    )
+
+    # Persist playing state so desired_playing_state survives reruns
+    if ctx.state.playing:
+        st.session_state["webcam_playing"] = True
+    elif "webcam_playing" in st.session_state and ctx is not None:
+        # Only clear if user explicitly stopped (not just a rerun)
+        pass
+
+    if not ctx.state.playing:
+        components.html("""
+        <!DOCTYPE html><html><body style="margin:0;background:#0e0e18;">
+        <div style="border:1px dashed rgba(90,176,255,.2);border-radius:14px;
+                    padding:40px 20px;text-align:center;font-family:monospace;">
+          <div style="font-size:36px;margin-bottom:12px;">📹</div>
+          <div style="font-size:11px;color:rgba(90,176,255,.5);line-height:1.9;">
+            Click <strong style="color:#5ab0ff;">Start Camera</strong> above<br/>
+            <span style="font-size:10px;color:rgba(90,176,255,.3);">
+              Only needed once — persists across all questions
             </span>
           </div>
         </div>
-        <style>
-          @keyframes pulse-dot {
-            0%,100%{opacity:1;transform:scale(1);}
-            50%{opacity:.4;transform:scale(.7);}
-          }
-          section[data-testid="stSidebar"] {
-            min-width: 300px !important;
-            max-width: 340px !important;
-          }
-          section[data-testid="stSidebar"] div[data-testid="stCustomComponentV1"] > iframe {
-            width:100% !important;
-            border-radius:14px !important;
-            border:1px solid rgba(90,176,255,.2) !important;
-            background:#06060c !important;
-          }
-        </style>
-        """, unsafe_allow_html=True)
+        </body></html>
+        """, height=160)
+        return None
 
-        rtc_config = build_rtc_config()
-
-        # key is always "bl_monitor" — never changes, never remounts the stream
-        ctx = webrtc_streamer(
-            key="bl_monitor",
-            mode=WebRtcMode.SENDRECV,
-            rtc_configuration=rtc_config,
-            video_processor_factory=VideoProcessor,
-            media_stream_constraints={
-                "video": {
-                    "width":     {"ideal": 640},
-                    "height":    {"ideal": 480},
-                    "frameRate": {"ideal": 15, "max": 20},
-                },
-                "audio": False,
-            },
-            async_processing=True,
-            desired_playing_state=True,
-            translations={
-                "start": "▶  Start Camera  (stays on for whole session)",
-                "stop":  "■  Stop Camera",
-            },
-        )
-
-        if not ctx.state.playing:
-            components.html("""
-            <!DOCTYPE html><html><body style="margin:0;background:#0e0e18;">
-            <div style="border:1px dashed rgba(90,176,255,.2);border-radius:14px;
-                        padding:32px 20px;text-align:center;font-family:monospace;">
-              <div style="font-size:32px;margin-bottom:10px;">📹</div>
-              <div style="font-size:11px;color:rgba(90,176,255,.5);line-height:1.9;">
-                Click <strong style="color:#5ab0ff;">Start Camera</strong> above<br/>
-                <span style="font-size:10px;color:rgba(90,176,255,.3);">
-                  Stays on for all questions — no reload
-                </span>
-              </div>
-            </div>
-            </body></html>
-            """, height=140)
-            return None
-
-        # Score panel rendered inside sidebar (compact)
-        summary = get_final_bl_summary()
-        scores_html = _build_scores_html(summary)
-        components.html(scores_html, height=820, scrolling=False)
-
-    # Return summary so webcam_interview.py can render inline alerts / metrics
-    return get_final_bl_summary()
+    summary = get_final_bl_summary()
+    scores_html = _build_scores_html(summary)
+    components.html(scores_html, height=800, scrolling=False)
+    return summary
 
 
 # ═════════════════════════════════════════════════════════════════════════════
