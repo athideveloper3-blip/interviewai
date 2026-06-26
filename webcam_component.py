@@ -13,7 +13,6 @@ from __future__ import annotations
 import os
 import time
 import threading
-import requests
 from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
