@@ -837,12 +837,13 @@ def _speak(text: str, rate: float = 0.92):
 #  Main render function
 # ═════════════════════════════════════════════════════════════════════════════
 
-def render_webcam_monitor() -> Optional[dict]:
+@st.fragment
+def render_webcam_monitor() -> None:
     """
-    Renders the WebRTC webcam monitor in-place (original column layout).
-    The key "bl_monitor" is always the same so streamlit-webrtc never
-    remounts the peer connection across reruns.
-    The score panel is rendered below the stream inside the same column.
+    Decorated with @st.fragment so Streamlit only rerenders THIS block
+    when the parent page does st.rerun() — the WebRTC component is
+    completely isolated from question transitions and never remounts.
+    Original two-column position is preserved in webcam_interview.py.
     """
     st.markdown("""
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
@@ -867,8 +868,6 @@ def render_webcam_monitor() -> Optional[dict]:
 
     rtc_config = build_rtc_config()
 
-    # "bl_monitor" key is fixed — streamlit-webrtc uses this to keep the same
-    # peer connection alive across reruns. Never change this key.
     ctx = webrtc_streamer(
         key="bl_monitor",
         mode=WebRtcMode.SENDRECV,
@@ -883,19 +882,12 @@ def render_webcam_monitor() -> Optional[dict]:
             "audio": False,
         },
         async_processing=True,
-        desired_playing_state=st.session_state.get("webcam_playing", None),
+        desired_playing_state=True,
         translations={
             "start": "▶  Start Camera  (stays on for whole session)",
             "stop":  "■  Stop Camera",
         },
     )
-
-    # Persist playing state so desired_playing_state survives reruns
-    if ctx.state.playing:
-        st.session_state["webcam_playing"] = True
-    elif "webcam_playing" in st.session_state and ctx is not None:
-        # Only clear if user explicitly stopped (not just a rerun)
-        pass
 
     if not ctx.state.playing:
         components.html("""
@@ -912,12 +904,11 @@ def render_webcam_monitor() -> Optional[dict]:
         </div>
         </body></html>
         """, height=160)
-        return None
+        return
 
     summary = get_final_bl_summary()
     scores_html = _build_scores_html(summary)
     components.html(scores_html, height=800, scrolling=False)
-    return summary
 
 
 # ═════════════════════════════════════════════════════════════════════════════
