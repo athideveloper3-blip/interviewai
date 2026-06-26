@@ -17,7 +17,8 @@ from dotenv import load_dotenv
 
 # Pre-load analyzer so webcam starts faster
 from webcam_component import get_analyzer
-get_analyzer()  # loads MediaPipe
+import threading
+threading.Thread(target=get_analyzer, daemon=True).start()
 
 # Pre-load YOLO model at startup
 try:
