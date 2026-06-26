@@ -1,7 +1,10 @@
 """
 webcam_component.py  ·  InterviewAI — Body Language Monitor
 ============================================================
-Optimized version — fast startup, no YOLO download, smooth WebRTC.
+Uses free Google STUN servers only — no Metered or TURN API keys required.
+
+Requires:
+    pip install streamlit-webrtc av mediapipe ultralytics opencv-python-headless
 """
 
 from __future__ import annotations
@@ -9,7 +12,6 @@ from __future__ import annotations
 import os
 import time
 import threading
-import json
 from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
@@ -19,42 +21,24 @@ import cv2
 import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
+import json
 from streamlit_webrtc import WebRtcMode, RTCConfiguration, webrtc_streamer
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  TURN / ICE server configuration  (free public TURN — no signup needed)
+#  ICE / STUN configuration  (free Google STUN — no API key needed)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _get_ice_servers() -> list:
-    return [
-        {"urls": ["stun:stun.l.google.com:19302"]},
-        {"urls": ["stun:stun1.l.google.com:19302"]},
-        {
-            "urls": ["turn:openrelay.metered.ca:80"],
-            "username": "openrelayproject",
-            "credential": "openrelayproject",
-        },
-        {
-            "urls": ["turn:openrelay.metered.ca:443"],
-            "username": "openrelayproject",
-            "credential": "openrelayproject",
-        },
-        {
-            "urls": ["turn:openrelay.metered.ca:443?transport=tcp"],
-            "username": "openrelayproject",
-            "credential": "openrelayproject",
-        },
-    ]
-
-
-@st.cache_data(ttl=86400)
-def get_ice_servers_cached() -> list:
-    return _get_ice_servers()
+# Multiple free STUN servers for reliability (no signup, no key, no bandwidth limit)
+_STUN_SERVERS = [
+    {"urls": ["stun:stun.l.google.com:19302"]},
+    {"urls": ["stun:stun1.l.google.com:19302"]},
+    {"urls": ["stun:stun2.l.google.com:19302"]},
+    {"urls": ["stun:stun3.l.google.com:19302"]},
+]
 
 
 def build_rtc_config() -> RTCConfiguration:
-    servers = get_ice_servers_cached()
-    return RTCConfiguration({"iceServers": servers})
+    return RTCConfiguration({"iceServers": _STUN_SERVERS})
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -252,9 +236,17 @@ class BodyLanguageAnalyzer:
         self._gaze_history   = deque(maxlen=90)
         self._yaw_buf        = deque(maxlen=8)
         self._pitch_buf      = deque(maxlen=8)
-        self._last_frame     = None  # cache last processed frame
-        # YOLO disabled — speeds up boot significantly
         self._yolo           = None
+        self._last_phone_det = 0.0
+        self._init_yolo()
+
+    def _init_yolo(self):
+        try:
+            from ultralytics import YOLO
+            model_path = os.path.join(os.path.dirname(__file__), "yolov8n.pt")
+            self._yolo = YOLO(model_path)
+        except Exception:
+            self._yolo = None
 
     def reset_session(self):
         with self._lock:
@@ -269,7 +261,6 @@ class BodyLanguageAnalyzer:
             self._gaze_history.clear()
             self._yaw_buf.clear()
             self._pitch_buf.clear()
-            self._last_frame   = None
 
     @staticmethod
     def _ear(lm, eye_idx: list, w: int, h: int) -> float:
@@ -375,6 +366,28 @@ class BodyLanguageAnalyzer:
         else:
             self._phone_start = None
 
+    def _detect_phone_yolo(self, frame: np.ndarray) -> bool:
+        if self._yolo is None:
+            return False
+        try:
+            results = self._yolo(frame, verbose=False)
+            for r in results:
+                for box in r.boxes:
+                    cls_id = int(box.cls[0])
+                    label  = self._yolo.names[cls_id]
+                    conf   = float(box.conf[0])
+                    if label == "cell phone" and conf > 0.75:
+                        now = time.time()
+                        if now - self._last_phone_det > 5:
+                            self._last_phone_det = now
+                            self.session.phone_events += 1
+                            self._log(CHEAT_PHONE_USAGE,
+                                      "Phone detected by object-detection model", "high")
+                        return True
+        except Exception:
+            pass
+        return False
+
     def _check_face_absence(self, face_detected: bool, now: float):
         if not face_detected:
             self.session.face_absent_frames += 1
@@ -453,20 +466,12 @@ class BodyLanguageAnalyzer:
 
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, None]:
         h, w = frame.shape[:2]
+        rgb  = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         now  = time.time()
 
         with self._lock:
             self.session.total_frames += 1
 
-            # ── OPTIMIZATION: only process every 3rd frame ──
-            if self.session.total_frames % 3 != 0:
-                if self._last_frame is not None:
-                    return self._last_frame, None
-                return frame, None
-
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        with self._lock:
             det       = self._face_detector.process(rgb)
             num_faces = len(det.detections) if det.detections else 0
             if num_faces > 1:
@@ -482,13 +487,15 @@ class BodyLanguageAnalyzer:
             else:
                 self._multi_start = None
 
+            if self.session.total_frames % 5 == 0:
+                self._detect_phone_yolo(frame)
+
             mesh = self._face_mesh.process(rgb)
             self._check_face_absence(bool(mesh.multi_face_landmarks), now)
 
             if not mesh.multi_face_landmarks:
                 frame = self._draw_hud(frame, "none", "none", 0, 0, 0,
                                        num_faces, self.session.cheat_score(), w, h)
-                self._last_frame = frame
                 return frame, None
 
             lm = mesh.multi_face_landmarks[0].landmark
@@ -571,7 +578,6 @@ class BodyLanguageAnalyzer:
             cheat_s = self.session.cheat_score()
             frame   = self._draw_hud(frame, gaze_dir, head_dir,
                                       yaw, pitch, nerv, num_faces, cheat_s, w, h)
-            self._last_frame = frame
             return frame, None
 
     def get_session_summary(self) -> dict:
@@ -831,25 +837,40 @@ def _speak(text: str, rate: float = 0.92):
 #  Main render function
 # ═════════════════════════════════════════════════════════════════════════════
 
-@st.fragment
-def render_webcam_monitor(col_webcam=None) -> None:
-    container = col_webcam if col_webcam is not None else st.container()
-    with container:
-        st.markdown('<div class="section-label">Body Language</div>', unsafe_allow_html=True)
+def render_webcam_monitor() -> Optional[dict]:
+    """
+    Webcam stream lives in the SIDEBAR — completely outside main content.
+    This means st.rerun() on question transitions never touches the WebRTC
+    component, so the camera feed never drops or reloads between questions.
+
+    A lightweight inline score panel is shown in the caller's column via
+    the returned summary dict (see webcam_interview.py usage).
+    """
+    # ── Sidebar: stream widget stays here permanently ─────────────────────────
+    with st.sidebar:
         st.markdown("""
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-          <div style="width:8px;height:8px;border-radius:50%;background:#5ab0ff;
-                      box-shadow:0 0 8px rgba(90,176,255,.8);
-                      animation:pulse-dot 2s infinite;flex-shrink:0;"></div>
-          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;
-                       color:rgba(90,176,255,.7);letter-spacing:.18em;text-transform:uppercase;">
-            Live Monitor · Integrity Analysis
-          </span>
+        <div style="padding:4px 0 10px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <div style="width:8px;height:8px;border-radius:50%;background:#5ab0ff;
+                        box-shadow:0 0 8px rgba(90,176,255,.8);
+                        animation:pulse-dot 2s infinite;flex-shrink:0;"></div>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;
+                         color:rgba(90,176,255,.7);letter-spacing:.18em;text-transform:uppercase;">
+              Live Monitor · Body Language
+            </span>
+          </div>
         </div>
         <style>
-          @keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1);}50%{opacity:.4;transform:scale(.7);} }
-          div[data-testid="stCustomComponentV1"] > iframe {
-            width:100% !important; height:420px !important;
+          @keyframes pulse-dot {
+            0%,100%{opacity:1;transform:scale(1);}
+            50%{opacity:.4;transform:scale(.7);}
+          }
+          section[data-testid="stSidebar"] {
+            min-width: 300px !important;
+            max-width: 340px !important;
+          }
+          section[data-testid="stSidebar"] div[data-testid="stCustomComponentV1"] > iframe {
+            width:100% !important;
             border-radius:14px !important;
             border:1px solid rgba(90,176,255,.2) !important;
             background:#06060c !important;
@@ -859,6 +880,7 @@ def render_webcam_monitor(col_webcam=None) -> None:
 
         rtc_config = build_rtc_config()
 
+        # key is always "bl_monitor" — never changes, never remounts the stream
         ctx = webrtc_streamer(
             key="bl_monitor",
             mode=WebRtcMode.SENDRECV,
@@ -884,22 +906,26 @@ def render_webcam_monitor(col_webcam=None) -> None:
             components.html("""
             <!DOCTYPE html><html><body style="margin:0;background:#0e0e18;">
             <div style="border:1px dashed rgba(90,176,255,.2);border-radius:14px;
-                        padding:40px 20px;text-align:center;font-family:monospace;">
-              <div style="font-size:36px;margin-bottom:12px;">📹</div>
+                        padding:32px 20px;text-align:center;font-family:monospace;">
+              <div style="font-size:32px;margin-bottom:10px;">📹</div>
               <div style="font-size:11px;color:rgba(90,176,255,.5);line-height:1.9;">
                 Click <strong style="color:#5ab0ff;">Start Camera</strong> above<br/>
                 <span style="font-size:10px;color:rgba(90,176,255,.3);">
-                  Only needed once — persists across all questions
+                  Stays on for all questions — no reload
                 </span>
               </div>
             </div>
             </body></html>
-            """, height=160)
-            return
+            """, height=140)
+            return None
 
+        # Score panel rendered inside sidebar (compact)
         summary = get_final_bl_summary()
         scores_html = _build_scores_html(summary)
-        components.html(scores_html, height=800, scrolling=False)
+        components.html(scores_html, height=820, scrolling=False)
+
+    # Return summary so webcam_interview.py can render inline alerts / metrics
+    return get_final_bl_summary()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
