@@ -874,19 +874,19 @@ def render_webcam_monitor() -> None:
         mode=WebRtcMode.SENDRECV,
         rtc_configuration=rtc_config,
         video_processor_factory=VideoProcessor,
-        media_stream_constraints={{
-            "video": {{
-                "width":     {{"ideal": 640}},
-                "height":    {{"ideal": 480}},
-                "frameRate": {{"ideal": 15, "max": 20}},
-            }},
+        media_stream_constraints={
+            "video": {
+                "width":     {"ideal": 640},
+                "height":    {"ideal": 480},
+                "frameRate": {"ideal": 15, "max": 20},
+            },
             "audio": False,
-        }},
+        },
         async_processing=True,
-        translations={{
+        translations={
             "start": "▶  Start Camera",
             "stop":  "■  Stop Camera",
-        }},
+        },
     )
 
     if not ctx.state.playing:
