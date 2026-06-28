@@ -1592,8 +1592,9 @@ elif S.screen == "interview":
     # ── Live integrity alerts ──
     if cfg.get("use_webcam"):
         live_summary = get_final_bl_summary()
-        render_alert_banner(live_summary)
-    
+        analyzer = get_analyzer()
+        if analyzer.session.total_frames > 0:
+            render_alert_banner(live_summary)
     detect_tab_switch()
 
 
