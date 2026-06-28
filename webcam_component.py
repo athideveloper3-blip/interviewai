@@ -142,6 +142,8 @@ class SessionMetrics:
         return round(max(0.0, 10.0 - (std_y + std_p) * 0.3), 1)
 
     def cheat_score(self) -> float:
+        if self.total_frames < 30:
+            return 0.0
         if not self.frames_face_visible:
             return 0.0
         t      = self.frames_face_visible
