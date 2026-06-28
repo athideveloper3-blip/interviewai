@@ -1704,6 +1704,8 @@ elif S.screen == "interview":
         S.screen = "summary" if (S.current_q + 1 >= total) else "interview"
         if S.screen == "interview":
             S.current_q += 1
+        else:
+            reset_analyzer()
         st.rerun()
 
     # ── Feedback Display ──
@@ -1736,6 +1738,8 @@ elif S.screen == "interview":
             S.screen = "summary" if is_last else "interview"
             if not is_last:
                 S.current_q += 1
+            else:
+                reset_analyzer()
             st.rerun()
 
         if S.questions:
